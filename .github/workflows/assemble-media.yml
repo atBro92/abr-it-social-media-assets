@@ -1,0 +1,45 @@
+name: Assemble ABR-IT media
+
+on:
+  push:
+    paths:
+      - '.media-staging/**'
+      - '.github/workflows/assemble-media.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assemble validated PNG files
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          changed=0
+          for manifest in .media-staging/*/output_path; do
+            dir="$(dirname "$manifest")"
+            out="$(cat "$dir/output_path")"
+            expected_sha="$(cat "$dir/sha256")"
+            expected_size="$(cat "$dir/size")"
+            mkdir -p "$(dirname "$out")"
+            cat "$dir"/chunk-* | tr -d '\n\r' | base64 --decode > "$out"
+            actual_sha="$(sha256sum "$out" | awk '{print $1}')"
+            actual_size="$(stat -c '%s' "$out")"
+            test "$actual_sha" = "$expected_sha"
+            test "$actual_size" = "$expected_size"
+            file "$out" | grep -q 'PNG image data, 1080 x 1080'
+            rm -rf "$dir"
+            changed=1
+          done
+          if [ "$changed" -eq 0 ]; then exit 0; fi
+          git config user.name "ABR-IT Media Bot"
+          git config user.email "info@abr-it.de"
+          git add .media-staging posts
+          git commit -m "Assemble validated ABR-IT social media asset"
+          git push
