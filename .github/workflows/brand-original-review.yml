@@ -1,0 +1,73 @@
+name: ABR-IT Brand Original Review
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/brand-original-review.yml']
+permissions:
+  contents: read
+jobs:
+  read-brand:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Read exact brand assets from the public business website
+        env:
+          OUT: ${{ runner.temp }}/brand-review
+        run: |
+          python - <<'PY'
+          import os,re,json,hashlib,base64
+          from pathlib import Path
+          from urllib.parse import urljoin,urlparse
+          from urllib.request import Request,build_opener,HTTPRedirectHandler
+          from html.parser import HTMLParser
+          root='https://www.abr-it.de/'
+          out=Path(os.environ['OUT']);out.mkdir(parents=True,exist_ok=True)
+          allowed={'abr-it.de','www.abr-it.de'}
+          def check(url):
+              p=urlparse(url)
+              if p.scheme!='https' or p.hostname not in allowed or p.username or p.password or p.port not in (None,443):raise ValueError('Unapproved brand host')
+          class Redirect(HTTPRedirectHandler):
+              def redirect_request(self,req,fp,code,msg,headers,newurl):
+                  check(newurl);return super().redirect_request(req,fp,code,msg,headers,newurl)
+          opener=build_opener(Redirect())
+          def get(url):
+              check(url)
+              with opener.open(Request(url,headers={'User-Agent':'ABR-IT-Brand-Asset-Review/1.0'}),timeout=25) as r:
+                  b=r.read(10000001)
+                  if len(b)>10000000:raise ValueError('Asset too large')
+                  return b,r.headers.get('Content-Type','')
+          b,_=get(root);text=b.decode('utf-8');(out/'homepage.html').write_text(text)
+          class Parser(HTMLParser):
+              def __init__(self):super().__init__();self.assets=[]
+              def handle_starttag(self,tag,attrs):
+                  a=dict(attrs)
+                  if tag=='img' and any(x in (' '.join(a.values())).lower() for x in ('logo','abr-it')):
+                      if a.get('src'):self.assets.append(a['src'])
+                  if tag=='link' and 'icon' in a.get('rel','') and a.get('href'):self.assets.append(a['href'])
+          parser=Parser();parser.feed(text)
+          for match in re.finditer(r'["\']([^"\']*(?:logo|Logo)[^"\']*\.(?:png|webp|svg|jpe?g))["\']',text):parser.assets.append(match.group(1))
+          records=[];seen=set()
+          for src in parser.assets:
+              if src in seen:continue
+              seen.add(src)
+              try:
+                  if src.startswith('data:image/'):
+                      header,data=src.split(',',1);asset=base64.b64decode(data) if ';base64' in header else data.encode();ct=header[5:].split(';')[0];url='embedded-public-website-logo'
+                  else:
+                      url=urljoin(root,src);asset,ct=get(url)
+                  ext={'image/png':'.png','image/webp':'.webp','image/jpeg':'.jpg','image/svg+xml':'.svg','image/x-icon':'.ico'}.get(ct.split(';')[0],Path(urlparse(url).path).suffix or '.bin')
+                  filename='brand-'+str(len(records))+ext;(out/filename).write_bytes(asset)
+                  records.append({'file':filename,'url':url,'sha256':hashlib.sha256(asset).hexdigest(),'bytes':len(asset),'content_type':ct})
+              except Exception as e:records.append({'source':src[:100],'error':str(e)[:160]})
+              if len(records)>=12:break
+          (out/'brand.json').write_text(json.dumps(records,ensure_ascii=False,indent=2))
+          print(json.dumps(records,ensure_ascii=False))
+          if not any('file' in x for x in records):raise SystemExit('Public logo source missing')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: abr-brand-original-${{ github.run_id }}
+          path: ${{ runner.temp }}/brand-review/
+          retention-days: 3
+          if-no-files-found: error
