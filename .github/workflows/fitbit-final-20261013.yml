@@ -1,0 +1,138 @@
+name: ABR-IT Fitbit Final 2026-10-13
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/fitbit-final-20261013.yml']
+permissions:
+  contents: write
+concurrency:
+  group: abr-it-final-media-main
+  cancel-in-progress: false
+jobs:
+  final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install raster compositor
+        run: |
+          python -m pip install --quiet 'Pillow==12.3.0'
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-dejavu-core
+      - name: Render, verify approved hash, and archive the final image
+        env:
+          OUT: ${{ runner.temp }}/fitbit-final
+        run: |
+          python - <<'PY'
+          from PIL import Image, ImageDraw, ImageFont
+          from pathlib import Path
+          from urllib.request import urlopen, Request, build_opener, HTTPRedirectHandler
+          from urllib.parse import urlparse
+          import hashlib, base64, io, os, json, subprocess, time
+          root=Path.cwd();out=Path(os.environ['OUT']);out.mkdir(parents=True,exist_ok=True)
+          photo_url='https://storage.googleapis.com/gweb-uniblog-publish-prod/images/Olive_Active_Lifestyle_Strength_Training_hero.width-1300.jpg'
+          expected_photo='74e67778b51c54a08b6a2e81883ba2b8d608183a9a3becd80169c894bf680bd1'
+          expected_logo='3b965948d31fd9a6faa8d6c3eaf30570c2111619e87a1a82b77796068fd87dbd'
+          expected_final='dbee7ccbc8d5985fd2fa6617bb5bd13bf123667b55940a09ea6e24d9b5c0b58f'
+          repo='atBro92/abr-it-social-media-assets'
+          def check_url(url):
+              p=urlparse(url)
+              if p.scheme!='https' or p.username or p.password or p.port not in (None,443):raise ValueError('PUBLIC_HTTPS_REQUIRED')
+              if p.hostname=='storage.googleapis.com':
+                  if url!=photo_url:raise ValueError('UNEXPECTED_PHOTO_URL')
+              elif p.hostname=='raw.githubusercontent.com':
+                  if not p.path.startswith('/'+repo+'/'):raise ValueError('UNEXPECTED_REPO')
+              else:raise ValueError('UNEXPECTED_HOST')
+          class Redirect(HTTPRedirectHandler):
+              def redirect_request(self,req,fp,code,msg,headers,newurl):
+                  check_url(newurl);return super().redirect_request(req,fp,code,msg,headers,newurl)
+          opener=build_opener(Redirect())
+          def download(url):
+              check_url(url)
+              with opener.open(Request(url,headers={'User-Agent':'ABR-IT-Final-Graphic/1.0'}),timeout=30) as r:
+                  body=r.read(15000001)
+                  if len(body)>15000000:raise ValueError('MEDIA_TOO_LARGE')
+                  return body
+          photo_bytes=download(photo_url)
+          assert hashlib.sha256(photo_bytes).hexdigest()==expected_photo,'PHOTO_HASH_MISMATCH'
+          stage=root/'.media-staging/2026-10-13-fitbit'
+          parts=[stage/f'logo-{i:04d}' for i in range(1,6)]
+          chunks=[p.read_text().strip() for p in parts]
+          report={'chunks':[{'index':i+1,'chars':len(s),'sha256':hashlib.sha256(s.encode()).hexdigest()} for i,s in enumerate(chunks)]}
+          encoded=''.join(chunks)
+          logo_bytes=base64.b64decode(encoded,validate=True)
+          logo_sha=hashlib.sha256(logo_bytes).hexdigest()
+          report.update(logo_sha256=logo_sha,photo_sha256=expected_photo)
+          (out/'result.json').write_text(json.dumps(report,indent=2))
+          assert len(encoded)==16592 and len(logo_bytes)==12444 and logo_sha==expected_logo,'LOGO_TRANSFER_HASH_MISMATCH'
+          Image.open(io.BytesIO(logo_bytes)).verify()
+          photo=Image.open(io.BytesIO(photo_bytes)).convert('RGB')
+          scaled=photo.resize((round(photo.width*1080/photo.height),1080),Image.Resampling.LANCZOS)
+          base=scaled.crop((170,0,1250,1080)).convert('RGBA')
+          footer=Image.new('RGBA',(1080,1080),(0,0,0,0));fd=ImageDraw.Draw(footer)
+          for y in range(630,1080):
+              t=min(1,max(0,(y-630)/245));alpha=round(255*t*t*(3-2*t))
+              fd.line((0,y,1080,y),fill=(0,0,0,alpha))
+          base=Image.alpha_composite(base,footer)
+          glass=Image.new('RGBA',(1080,1080),(0,0,0,0));g=ImageDraw.Draw(glass)
+          g.rounded_rectangle((42,44,717,498),radius=30,fill=(253,249,242,142),outline=(255,255,255,205),width=2)
+          base=Image.alpha_composite(base,glass);d=ImageDraw.Draw(base)
+          regular='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf';bold='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+          font=lambda size,b=False:ImageFont.truetype(bold if b else regular,size,layout_engine=ImageFont.Layout.BASIC)
+          d.rounded_rectangle((76,78,223,133),radius=12,fill='#EF1A2C')
+          f=font(28,True);box=d.textbbox((0,0),'NEWS',font=f)
+          d.text((149.5-(box[2]-box[0])/2,105.5-(box[3]-box[1])/2-box[1]),'NEWS',font=f,fill='white')
+          hf=font(49,True)
+          for i,line in enumerate(['FITBIT EDGE KOMMT','MIT WECHSELAKKU']):
+              assert d.textlength(line,font=hf)<610
+              d.text((76,173+i*64),line,font=hf,fill='#121416')
+          for text,y in [('Ab 179,99 € vorbestellbar.',352),('Verkaufsstart: 27. Oktober.',397)]:d.text((78,y),text,font=font(28),fill='#22262A')
+          d.rounded_rectangle((78,457,191,463),radius=3,fill='#EF1A2C')
+          logo=Image.open(io.BytesIO(logo_bytes)).convert('RGB').resize((250,250),Image.Resampling.LANCZOS)
+          base.paste(logo,(806,812));d=ImageDraw.Draw(base)
+          d.text((49,926),'Next Level IT,',font=font(30,True),fill='white')
+          d.text((49,971),'weil Stillstand keine Option ist.',font=font(30,True),fill='white')
+          d.text((51,1024),'Quelle & Bild: Google',font=font(18),fill='#E8E9EC')
+          final=base.convert('RGB');p=out/'ABR-IT-NEWS-Fitbit-Edge-2026-10-13.png'
+          final.save(p,format='PNG',compress_level=9,optimize=False)
+          final.resize((360,360),Image.Resampling.LANCZOS).save(out/'preview-360.png')
+          body=p.read_bytes();sha=hashlib.sha256(body).hexdigest()
+          report.update(sha256=sha,bytes=len(body),width=1080,height=1080,format='PNG',expected_final_sha256=expected_final,archived=False,social_posts_created=0)
+          (out/'result.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
+          assert sha==expected_final,'FINAL_HASH_DIFFERS_REVIEW_ARTIFACT_BEFORE_APPROVAL'
+          output_path='posts/2026/10/2026-10-13-main-fitbit-edge-'+sha[:8]+'.png';dest=root/output_path
+          if dest.exists():assert hashlib.sha256(dest.read_bytes()).hexdigest()==sha,'REFUSE_OVERWRITE'
+          else:
+              dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(body)
+              subprocess.run(['git','config','user.name','ABR-IT Media Bot'],check=True)
+              subprocess.run(['git','config','user.email','info@abr-it.de'],check=True)
+              subprocess.run(['git','add','--',output_path],check=True)
+              subprocess.run(['git','commit','-m','Archive approved Fitbit Edge MAIN graphic'],check=True)
+              for attempt in range(3):
+                  subprocess.run(['git','fetch','origin','main'],check=True)
+                  subprocess.run(['git','rebase','origin/main'],check=True)
+                  pushed=subprocess.run(['git','push','origin','HEAD:main'],capture_output=True,text=True)
+                  if pushed.returncode==0:break
+                  if attempt==2:raise SystemExit('Git push failed; reconcile before retry')
+                  time.sleep(2**(attempt+1))
+          commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          raw='https://raw.githubusercontent.com/'+repo+'/'+commit+'/'+output_path
+          raw_body=download(raw)
+          assert len(raw_body)==len(body) and hashlib.sha256(raw_body).hexdigest()==sha,'PUBLIC_RAW_READBACK_MISMATCH'
+          report.update(archived=True,commit=commit,output_path=output_path,raw_url=raw,public_raw_sha256_match=True)
+          (out/'result.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
+          print(json.dumps({'archived':True,'sha256':sha,'bytes':len(body),'raw_url':raw,'social_posts_created':0}))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: abr-fitbit-final-${{ github.run_id }}
+          path: ${{ runner.temp }}/fitbit-final/
+          retention-days: 7
+          if-no-files-found: error
