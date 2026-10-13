@@ -9,7 +9,8 @@
     {
       "source_url": "https://static.metricool.com/planner/202610/6629428-file-1807285363785717410.jpeg",
       "output_path": "posts/2026/10/2026-10-08-radar-amazon-alexa-tablets.jpeg",
-      "approved": false
+      "sha256": "36320de59e01f9647f113621ce343579a9a3e845b8ee758c2db369233e192570",
+      "approved": true
     },
     {
       "source_url": "https://static.metricool.com/planner/202610/6629428-file-15818451822467387610.png",
@@ -38,7 +39,8 @@
     {
       "source_url": "https://static.metricool.com/planner/202610/6629428-file-5548667178432065688.png",
       "output_path": "posts/2026/10/2026-10-12-service-datensicherung.png",
-      "approved": false
+      "sha256": "c9fc5799973e4a47ea41cdb0d150568e65afb064580982ab53abede5a641a472",
+      "approved": true
     }
   ]
 }
