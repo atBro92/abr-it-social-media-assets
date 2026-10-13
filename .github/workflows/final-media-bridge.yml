@@ -1,0 +1,179 @@
+name: ABR-IT Final Media Bridge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.media-staging/*/source.json'
+      - '.github/workflows/final-media-bridge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: abr-it-final-media-main
+  cancel-in-progress: false
+
+jobs:
+  final-media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Install image validator
+        run: python -m pip install --quiet 'Pillow==11.3.0'
+      - name: Resolve and validate approved final media
+        env:
+          RESULT_DIR: ${{ runner.temp }}/abr-final-media
+        run: |
+          python - <<'PY'
+          import hashlib, io, json, os, re, shutil, subprocess, time
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
+          from urllib.error import HTTPError, URLError
+          from PIL import Image
+
+          root = Path.cwd().resolve()
+          result = Path(os.environ['RESULT_DIR'])
+          result.mkdir(parents=True, exist_ok=True)
+          max_bytes = 15 * 1024 * 1024
+          repo = 'atBro92/abr-it-social-media-assets'
+          changed, reports, failures = [], [], []
+
+          def validate_url(url):
+              p = urlparse(url)
+              if p.scheme != 'https' or p.username or p.password or p.port not in (None, 443):
+                  raise ValueError('HTTPS_PUBLIC_SOURCE_REQUIRED')
+              host = p.hostname or ''
+              if host == 'static.metricool.com':
+                  if not re.fullmatch(r'/planner/\d{6}/6629428-[A-Za-z0-9._-]+', p.path):
+                      raise ValueError('METRICOOL_BRAND_SCOPE_MISMATCH')
+              elif host == 'raw.githubusercontent.com':
+                  if not p.path.startswith('/' + repo + '/'):
+                      raise ValueError('GITHUB_REPOSITORY_SCOPE_MISMATCH')
+              elif host not in {'media.canva.com', 'export.canva.com', 'export-download.canva.com'}:
+                  raise ValueError('SOURCE_HOST_NOT_ALLOWED')
+              if 'thumbnail' in p.query.lower():
+                  raise ValueError('THUMBNAIL_IS_NOT_FINAL_MEDIA')
+
+          class SafeRedirect(HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  validate_url(newurl)
+                  return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+          opener = build_opener(SafeRedirect())
+          def download(url):
+              validate_url(url)
+              for attempt in range(3):
+                  try:
+                      with opener.open(Request(url, headers={'User-Agent':'ABR-IT-Final-Media-Bridge/1.0'}), timeout=30) as r:
+                          body = r.read(max_bytes + 1)
+                          if len(body) > max_bytes:
+                              raise ValueError('MEDIA_TOO_LARGE')
+                          return body
+                  except HTTPError as e:
+                      if e.code not in (429, 500, 502, 503, 504) or attempt == 2:
+                          raise RuntimeError('SOURCE_HTTP_' + str(e.code)) from None
+                      retry_after = e.headers.get('Retry-After', '')
+                      if retry_after.isdigit() and int(retry_after) > 60:
+                          raise RuntimeError('RETRY_AFTER_EXCEEDS_RUN_BUDGET') from None
+                      time.sleep(int(retry_after) if retry_after.isdigit() else 2 ** (attempt + 1))
+                  except URLError:
+                      if attempt == 2:
+                          raise RuntimeError('SOURCE_NETWORK_ERROR') from None
+                      time.sleep(2 ** (attempt + 1))
+
+          manifests = sorted(root.glob('.media-staging/*/source.json'))
+          for manifest in manifests:
+              try:
+                  payload = json.loads(manifest.read_text(encoding='utf-8'))
+                  entries = payload['assets']
+                  if not isinstance(entries, list) or not 1 <= len(entries) <= 20:
+                      raise ValueError('INVALID_ASSET_COUNT')
+                  fully_archived = True
+                  for entry in entries:
+                      out = entry['output_path']
+                      if not re.fullmatch(r'posts/\d{4}/\d{2}/[A-Za-z0-9][A-Za-z0-9._-]*\.(png|jpe?g)', out):
+                          raise ValueError('INVALID_OUTPUT_PATH')
+                      dest = root / out
+                      if root not in dest.resolve().parents or any(p.is_symlink() for p in [dest, *dest.parents]):
+                          raise ValueError('UNSAFE_OUTPUT_PATH')
+                      body = download(entry['source_url'])
+                      sha = hashlib.sha256(body).hexdigest()
+                      with Image.open(io.BytesIO(body)) as im:
+                          fmt, size = im.format, im.size
+                          im.verify()
+                      expected_fmt = 'PNG' if out.endswith('.png') else 'JPEG'
+                      if fmt != expected_fmt or size != (1080, 1080):
+                          raise ValueError('FINAL_IMAGE_MUST_BE_VALID_1080_SQUARE')
+                      expected_sha = entry.get('sha256')
+                      if expected_sha is not None and expected_sha != sha:
+                          raise ValueError('SHA256_MISMATCH:' + out)
+                      original = result / Path(out).name
+                      original.write_bytes(body)
+                      with Image.open(io.BytesIO(body)) as im:
+                          im.convert('RGB').resize((360, 360), Image.Resampling.LANCZOS).save(result / (Path(out).stem + '-preview.jpg'), quality=90)
+                      approved = entry.get('approved') is True
+                      if approved and not re.fullmatch(r'[0-9a-f]{64}', expected_sha or ''):
+                          raise ValueError('APPROVAL_REQUIRES_EXPECTED_SHA256')
+                      if approved:
+                          if dest.exists():
+                              if hashlib.sha256(dest.read_bytes()).hexdigest() != sha:
+                                  raise ValueError('REFUSE_OVERWRITE:' + out)
+                              state = 'already_archived'
+                          else:
+                              dest.parent.mkdir(parents=True, exist_ok=True)
+                              dest.write_bytes(body)
+                              changed.append(out)
+                              state = 'archived'
+                      else:
+                          state = 'downloaded_for_visual_review'
+                          fully_archived = False
+                      reports.append({'output_path':out, 'sha256':sha, 'bytes':len(body), 'format':fmt, 'width':1080, 'height':1080, 'state':state})
+                  if fully_archived:
+                      manifest.unlink()
+                      changed.append(str(manifest.relative_to(root)))
+              except Exception as exc:
+                  failures.append({'request':str(manifest.relative_to(root)), 'error':str(exc)[:300]})
+          if failures:
+              (result / 'result.json').write_text(json.dumps({'assets':reports,'errors':failures,'committed':False}, ensure_ascii=False, indent=2), encoding='utf-8')
+              raise SystemExit('Final-media validation failed; no commit created. See result artifact.')
+          if changed:
+              subprocess.run(['git','config','user.name','ABR-IT Media Bot'], check=True)
+              subprocess.run(['git','config','user.email','info@abr-it.de'], check=True)
+              subprocess.run(['git','add','--',*changed], check=True)
+              subprocess.run(['git','commit','-m','Archive verified ABR-IT final media'], check=True)
+              for attempt in range(3):
+                  subprocess.run(['git','fetch','origin','main'], check=True)
+                  subprocess.run(['git','rebase','origin/main'], check=True)
+                  push = subprocess.run(['git','push','origin','HEAD:main'], capture_output=True, text=True)
+                  if push.returncode == 0:
+                      break
+                  if attempt == 2:
+                      raise SystemExit('Git push failed; inspect run before retrying.')
+                  time.sleep(2 ** (attempt + 1))
+          commit = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          for row in reports:
+              if row['state'] in ('archived','already_archived'):
+                  url = 'https://raw.githubusercontent.com/' + repo + '/' + commit + '/' + row['output_path']
+                  fetched = download(url)
+                  if hashlib.sha256(fetched).hexdigest() != row['sha256'] or len(fetched) != row['bytes']:
+                      raise SystemExit('PUBLIC_RAW_READBACK_MISMATCH')
+                  row['raw_url'] = url
+                  row['public_raw_sha256_match'] = True
+          (result / 'result.json').write_text(json.dumps({'commit':commit,'assets':reports,'errors':[],'social_posts_created':0}, ensure_ascii=False, indent=2), encoding='utf-8')
+          print(json.dumps({'commit':commit,'verified_assets':len(reports),'social_posts_created':0}))
+          PY
+      - name: Save verifiable media and readback results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: abr-final-media-${{ github.run_id }}
+          path: ${{ runner.temp }}/abr-final-media/
+          retention-days: 7
+          if-no-files-found: error
