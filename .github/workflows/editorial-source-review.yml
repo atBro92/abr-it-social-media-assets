@@ -1,0 +1,79 @@
+name: ABR-IT Official Source Review
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/editorial-source-review.yml']
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read public manufacturer sources and image references
+        env:
+          OUT: ${{ runner.temp }}/source-review
+        run: |
+          python - <<'PY'
+          import os,json,re,html,hashlib
+          from pathlib import Path
+          from urllib.parse import urljoin,urlparse
+          from urllib.request import Request,build_opener,HTTPRedirectHandler
+          from html.parser import HTMLParser
+          out=Path(os.environ['OUT']);out.mkdir(parents=True,exist_ok=True)
+          hosts={'blog.google','storage.googleapis.com','lh3.googleusercontent.com','lh4.googleusercontent.com','lh5.googleusercontent.com','www.gstatic.com','store.google.com'}
+          def check(u):
+              p=urlparse(u)
+              if p.scheme!='https' or p.hostname not in hosts or p.username or p.password or p.port not in (None,443):raise ValueError('Unapproved public source host')
+          class Redirect(HTTPRedirectHandler):
+              def redirect_request(self,req,fp,code,msg,headers,newurl):
+                  check(newurl);return super().redirect_request(req,fp,code,msg,headers,newurl)
+          opener=build_opener(Redirect())
+          def get(u):
+              check(u)
+              with opener.open(Request(u,headers={'User-Agent':'ABR-IT-Editorial-Reference/1.0'}),timeout=30) as r:
+                  data=r.read(15000001)
+                  if len(data)>15000000:raise ValueError('Source exceeds review budget')
+                  return data,r.headers.get('Content-Type','')
+          class Images(HTMLParser):
+              def __init__(self):super().__init__();self.items=[]
+              def handle_starttag(self,tag,attrs):
+                  a=dict(attrs)
+                  if tag=='meta' and a.get('property') in ('og:image','twitter:image'):self.items.append({'url':a.get('content',''),'alt':'Lead image'})
+                  if tag=='img':
+                      src=a.get('src') or a.get('data-src') or ''
+                      ss=a.get('srcset') or a.get('data-srcset')
+                      if ss:src=ss.split(',')[-1].strip().split()[0]
+                      if src:self.items.append({'url':src,'alt':a.get('alt','')})
+          pages=['https://blog.google/products-and-platforms/devices/fitbit/google-fitbit-edge/','https://blog.google/intl/de-de/produkte/hardware/google-fitbit-edge/']
+          records=[];seen=set();errors=[]
+          for pi,page in enumerate(pages):
+              try:
+                  body,ct=get(page);text=body.decode('utf-8');(out/f'primary-{pi}.html').write_text(text)
+                  parser=Images();parser.feed(text)
+                  for row in parser.items:
+                      u=urljoin(page,html.unescape(row['url']))
+                      if u in seen or urlparse(u).hostname not in hosts:continue
+                      seen.add(u)
+                      if not any(k in (u+' '+row['alt']).lower() for k in ('fitbit','edge','lead image','lineup','wear')):continue
+                      try:
+                          b,typ=get(u)
+                          if not typ.startswith('image/'):continue
+                          ext={'image/jpeg':'.jpg','image/png':'.png','image/webp':'.webp'}.get(typ.split(';')[0],'.bin')
+                          name=f'reference-{len(records):02d}'+ext;(out/name).write_bytes(b)
+                          records.append({'file':name,'url':u,'alt':row['alt'],'source_page':page,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)})
+                      except Exception as e:errors.append({'url':u,'error':str(e)[:200]})
+                      if len(records)>=12:break
+              except Exception as e:errors.append({'url':page,'error':str(e)[:200]})
+              if len(records)>=12:break
+          (out/'sources.json').write_text(json.dumps({'references':records,'errors':errors,'social_posts_created':0},ensure_ascii=False,indent=2))
+          print('Official image references:',len(records))
+          if not records:raise SystemExit('No official image references downloaded')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: abr-official-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/source-review/
+          retention-days: 3
+          if-no-files-found: error
