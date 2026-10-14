@@ -1,0 +1,11 @@
+{
+  "name": "2026-10-14-main-apple-homeview",
+  "photo_url": "https://www.apple.com/newsroom/images/2026/10/meet-apple-homeview-a-new-way-to-enjoy-entertainment-and-manage-the-home/article/Apple-HomeView-lifestyle-living-room-261013_big.jpg.large_2x.jpg",
+  "photo_sha256": "628af13f698505f2a38aa8160e4117f754bf16bf9dc606235b005760fa9c214a",
+  "crop_x": 240,
+  "badge": "NEWS",
+  "headline": ["APPLE HOMEVIEW", "VORERST OHNE EU"],
+  "subhead": ["Neues Smart-Home-Display mit Siri AI.", "Deutschland bleibt vorerst außen vor."],
+  "credit": "Quelle & Bild: Apple",
+  "approved_sha256": null
+}
