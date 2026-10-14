@@ -2,36 +2,55 @@ name: ABR-IT Official Source Review
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/editorial-source-review.yml']
+    paths:
+      - '.github/workflows/editorial-source-review.yml'
+      - '.media-reference/*.json'
+  schedule:
+    - cron: '15 5 * * *'
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: abr-media-reference
+  cancel-in-progress: false
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
-      - name: Read public manufacturer sources and image references
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Read approved manufacturer references and existing final archive
         env:
           OUT: ${{ runner.temp }}/source-review
         run: |
           python - <<'PY'
-          import os,json,re,html,hashlib
+          import os,json,html,hashlib,subprocess,shutil
           from pathlib import Path
           from urllib.parse import urljoin,urlparse
           from urllib.request import Request,build_opener,HTTPRedirectHandler
           from html.parser import HTMLParser
           out=Path(os.environ['OUT']);out.mkdir(parents=True,exist_ok=True)
-          hosts={'blog.google','storage.googleapis.com','lh3.googleusercontent.com','lh4.googleusercontent.com','lh5.googleusercontent.com','www.gstatic.com','store.google.com'}
+          archive=out/'history';archive.mkdir(exist_ok=True)
+          paths=sorted([p for p in Path('posts').glob('*/*/*') if p.suffix.lower() in ('.png','.jpg','.jpeg')],reverse=True)[:45]
+          inventory=[]
+          for p in paths:
+              b=p.read_bytes();shutil.copyfile(p,archive/p.name)
+              inventory.append({'path':str(p),'file':str(Path('history')/p.name),'sha256':hashlib.sha256(b).hexdigest(),'git_blob_sha':hashlib.sha1(b'blob '+str(len(b)).encode()+b'\0'+b).hexdigest(),'bytes':len(b)})
+          (out/'history.json').write_text(json.dumps({'commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'images':inventory},indent=2))
+          hosts={'blog.google','storage.googleapis.com','lh3.googleusercontent.com','lh4.googleusercontent.com','lh5.googleusercontent.com','www.gstatic.com','store.google.com','www.apple.com','images.apple.com','www.abr-it.de'}
           def check(u):
               p=urlparse(u)
               if p.scheme!='https' or p.hostname not in hosts or p.username or p.password or p.port not in (None,443):raise ValueError('Unapproved public source host')
+              if p.query and any(k in p.query.lower() for k in ('token=','signature=','credential=')):raise ValueError('Credential-bearing source rejected')
           class Redirect(HTTPRedirectHandler):
               def redirect_request(self,req,fp,code,msg,headers,newurl):
                   check(newurl);return super().redirect_request(req,fp,code,msg,headers,newurl)
           opener=build_opener(Redirect())
           def get(u):
               check(u)
-              with opener.open(Request(u,headers={'User-Agent':'ABR-IT-Editorial-Reference/1.0'}),timeout=30) as r:
+              with opener.open(Request(u,headers={'User-Agent':'ABR-IT-Editorial-Reference/2.0'}),timeout=25) as r:
                   data=r.read(15000001)
                   if len(data)>15000000:raise ValueError('Source exceeds review budget')
                   return data,r.headers.get('Content-Type','')
@@ -45,7 +64,12 @@ jobs:
                       ss=a.get('srcset') or a.get('data-srcset')
                       if ss:src=ss.split(',')[-1].strip().split()[0]
                       if src:self.items.append({'url':src,'alt':a.get('alt','')})
-          pages=['https://blog.google/products-and-platforms/devices/fitbit/google-fitbit-edge/','https://blog.google/intl/de-de/produkte/hardware/google-fitbit-edge/']
+          requests=sorted(Path('.media-reference').glob('*.json'))
+          if requests:
+              cfg=json.loads(requests[-1].read_text());pages=cfg['pages'];match=cfg['match'].lower()
+              if not isinstance(pages,list) or not 1<=len(pages)<=3 or not 2<=len(match)<=80:raise ValueError('Invalid reference request')
+          else:
+              pages=['https://www.apple.com/de/newsroom/2026/10/meet-apple-homeview-a-new-way-to-enjoy-entertainment-and-manage-the-home/'];match='homeview'
           records=[];seen=set();errors=[]
           for pi,page in enumerate(pages):
               try:
@@ -55,7 +79,7 @@ jobs:
                       u=urljoin(page,html.unescape(row['url']))
                       if u in seen or urlparse(u).hostname not in hosts:continue
                       seen.add(u)
-                      if not any(k in (u+' '+row['alt']).lower() for k in ('fitbit','edge','lead image','lineup','wear')):continue
+                      if match not in (u+' '+row['alt']).lower():continue
                       try:
                           b,typ=get(u)
                           if not typ.startswith('image/'):continue
@@ -63,17 +87,17 @@ jobs:
                           name=f'reference-{len(records):02d}'+ext;(out/name).write_bytes(b)
                           records.append({'file':name,'url':u,'alt':row['alt'],'source_page':page,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)})
                       except Exception as e:errors.append({'url':u,'error':str(e)[:200]})
-                      if len(records)>=12:break
+                      if len(records)>=14:break
               except Exception as e:errors.append({'url':page,'error':str(e)[:200]})
-              if len(records)>=12:break
-          (out/'sources.json').write_text(json.dumps({'references':records,'errors':errors,'social_posts_created':0},ensure_ascii=False,indent=2))
-          print('Official image references:',len(records))
-          if not records:raise SystemExit('No official image references downloaded')
+              if len(records)>=14:break
+          (out/'sources.json').write_text(json.dumps({'references':records,'errors':errors,'social_posts_created':0,'repository_files_changed':0},ensure_ascii=False,indent=2))
+          print('Archive images:',len(inventory),'Official references:',len(records))
+          if not records:raise SystemExit('Reference download incomplete; history artifact remains usable')
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: abr-official-source-${{ github.run_id }}
           path: ${{ runner.temp }}/source-review/
-          retention-days: 3
+          retention-days: 14
           if-no-files-found: error
