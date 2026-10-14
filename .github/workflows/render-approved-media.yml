@@ -1,0 +1,140 @@
+name: ABR-IT Approved Media Renderer
+on:
+  push:
+    branches: [main]
+    paths: ['.media-render/*.json', '.github/workflows/render-approved-media.yml']
+permissions:
+  contents: write
+concurrency:
+  group: abr-it-final-media-main
+  cancel-in-progress: false
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install reproducible compositor
+        run: |
+          python -m pip install --quiet 'Pillow==12.3.0'
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-dejavu-core
+      - name: Render and archive only approved final bytes
+        env:
+          OUT: ${{ runner.temp }}/approved-media
+        run: |
+          python - <<'PY'
+          import os,io,json,hashlib,base64,re,subprocess,time,shutil
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from urllib.request import Request,build_opener,HTTPRedirectHandler
+          from PIL import Image,ImageDraw,ImageFont
+          root=Path.cwd();out=Path(os.environ['OUT']);out.mkdir(parents=True,exist_ok=True)
+          repo='atBro92/abr-it-social-media-assets'
+          def allowed(u):
+              p=urlparse(u)
+              if p.scheme!='https' or p.username or p.password or p.port not in (None,443):raise ValueError('PUBLIC_HTTPS_REQUIRED')
+              if p.hostname=='www.apple.com' and p.path.startswith('/newsroom/images/'):return
+              if p.hostname=='storage.googleapis.com' and p.path.startswith('/gweb-uniblog-publish-prod/'):return
+              if p.hostname=='raw.githubusercontent.com' and p.path.startswith('/'+repo+'/'):return
+              raise ValueError('SOURCE_HOST_OR_PATH_NOT_ALLOWED')
+          class Redirect(HTTPRedirectHandler):
+              def redirect_request(self,req,fp,code,msg,headers,newurl):
+                  allowed(newurl);return super().redirect_request(req,fp,code,msg,headers,newurl)
+          opener=build_opener(Redirect())
+          def get(u):
+              allowed(u)
+              with opener.open(Request(u,headers={'User-Agent':'ABR-IT-Approved-Media/1.0'}),timeout=30) as r:
+                  b=r.read(15000001)
+                  if len(b)>15000000:raise ValueError('SOURCE_TOO_LARGE')
+                  return b
+          stage=root/'.media-staging/2026-10-13-fitbit'
+          logo_bytes=base64.b64decode(''.join((stage/f'logo-{i:04d}').read_text().strip() for i in range(1,6)),validate=True)
+          assert hashlib.sha256(logo_bytes).hexdigest()=='3b965948d31fd9a6faa8d6c3eaf30570c2111619e87a1a82b77796068fd87dbd','ORIGINAL_LOGO_MISMATCH'
+          (out/'original-logo.webp').write_bytes(logo_bytes)
+          bold='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf';regular='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+          font=lambda size,b=False:ImageFont.truetype(bold if b else regular,size,layout_engine=ImageFont.Layout.BASIC)
+          reports=[]
+          configs=sorted(root.glob('.media-render/*.json'))
+          for config in configs:
+              cfg=json.loads(config.read_text());name=cfg['name']
+              if not re.fullmatch(r'20\d{2}-\d{2}-\d{2}-(main|service|radar)-[a-z0-9-]{3,80}',name):raise ValueError('INVALID_NAME')
+              photo_bytes=get(cfg['photo_url'])
+              assert hashlib.sha256(photo_bytes).hexdigest()==cfg['photo_sha256'],'PHOTO_CHANGED'
+              im=Image.open(io.BytesIO(photo_bytes)).convert('RGB')
+              scaled=im.resize((round(im.width*1080/im.height),1080),Image.Resampling.LANCZOS)
+              x=cfg['crop_x'];assert isinstance(x,int) and 0<=x<=scaled.width-1080
+              base=scaled.crop((x,0,x+1080,1080)).convert('RGBA')
+              layer=Image.new('RGBA',(1080,1080));d=ImageDraw.Draw(layer)
+              for y in range(780,1080):
+                  t=min(1,max(0,(y-780)/130));d.line((0,y,1080,y),fill=(0,0,0,round(255*t*t*(3-2*t))))
+              base=Image.alpha_composite(base,layer)
+              layer=Image.new('RGBA',(1080,1080));d=ImageDraw.Draw(layer)
+              d.rounded_rectangle((42,42,810,410),radius=30,fill=(253,249,242,165),outline=(255,255,255,200),width=2)
+              base=Image.alpha_composite(base,layer);d=ImageDraw.Draw(base)
+              badge=cfg['badge'];assert badge in ('NEWS','RATGEBER','SERVICE')
+              bw=round(d.textlength(badge,font=font(27,True)))+50
+              d.rounded_rectangle((76,73,76+bw,128),radius=12,fill='#EF1A2C')
+              d.text((101,83),badge,font=font(27,True),fill='white')
+              headline=cfg['headline'];assert isinstance(headline,list) and len(headline)==2
+              for i,line in enumerate(headline):
+                  assert '\n' not in line and d.textlength(line,font=font(49,True))<=700
+                  d.text((76,156+64*i),line,font=font(49,True),fill='#111316')
+              assert len(cfg['subhead'])==2
+              for i,line in enumerate(cfg['subhead']):
+                  assert '\n' not in line and d.textlength(line,font=font(27))<=700
+                  d.text((78,304+39*i),line,font=font(27),fill='#25272A')
+              d.rounded_rectangle((78,390,191,396),radius=3,fill='#EF1A2C')
+              logo=Image.open(io.BytesIO(logo_bytes)).convert('RGB').resize((250,250),Image.Resampling.LANCZOS)
+              base.paste(logo,(806,812));d=ImageDraw.Draw(base)
+              d.text((49,926),'Next Level IT,',font=font(30,True),fill='white')
+              d.text((49,971),'weil Stillstand keine Option ist.',font=font(30,True),fill='white')
+              credit=cfg['credit'];assert len(credit)<=90 and '\n' not in credit
+              d.text((51,1024),credit,font=font(18),fill='#E8E9EC')
+              p=out/(name+'.png');final=base.convert('RGB');final.save(p,format='PNG',compress_level=9,optimize=False)
+              final.resize((360,360),Image.Resampling.LANCZOS).save(out/(name+'-preview.png'))
+              b=p.read_bytes();sha=hashlib.sha256(b).hexdigest()
+              row={'name':name,'file':p.name,'sha256':sha,'bytes':len(b),'width':1080,'height':1080,'format':'PNG','photo_sha256':cfg['photo_sha256'],'logo_sha256':hashlib.sha256(logo_bytes).hexdigest(),'archived':False}
+              reports.append(row)
+              approval=cfg.get('approved_sha256')
+              if not approval:continue
+              if approval!=sha:
+                  (out/'result.json').write_text(json.dumps({'images':reports,'error':'APPROVED_SHA256_MISMATCH'},indent=2));raise ValueError('APPROVED_SHA256_MISMATCH')
+              path='posts/'+name[:4]+'/'+name[5:7]+'/'+name+'-'+sha[:8]+'.png';dest=root/path
+              if dest.exists():assert hashlib.sha256(dest.read_bytes()).hexdigest()==sha,'REFUSE_OVERWRITE'
+              else:
+                  dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(b)
+                  subprocess.run(['git','config','user.name','ABR-IT Media Bot'],check=True)
+                  subprocess.run(['git','config','user.email','info@abr-it.de'],check=True)
+                  subprocess.run(['git','add','--',path],check=True)
+                  subprocess.run(['git','commit','-m','Archive hash-approved ABR-IT final graphic'],check=True)
+                  for attempt in range(3):
+                      subprocess.run(['git','fetch','origin','main'],check=True)
+                      subprocess.run(['git','rebase','origin/main'],check=True)
+                      push=subprocess.run(['git','push','origin','HEAD:main'],capture_output=True)
+                      if push.returncode==0:break
+                      if attempt==2:raise RuntimeError('PUSH_FAILED')
+                      time.sleep(2**(attempt+1))
+              commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip();raw='https://raw.githubusercontent.com/'+repo+'/'+commit+'/'+path
+              rb=get(raw);assert len(rb)==len(b) and hashlib.sha256(rb).hexdigest()==sha,'PUBLIC_RAW_MISMATCH'
+              row.update(archived=True,commit=commit,output_path=path,raw_url=raw,public_raw_sha256_match=True)
+          history=out/'history';history.mkdir(exist_ok=True);hist=[]
+          for p in sorted(root.glob('posts/*/*/*'),reverse=True)[:50]:
+              if p.suffix.lower() not in ('.png','.jpg','.jpeg'):continue
+              b=p.read_bytes();shutil.copyfile(p,history/p.name);hist.append({'path':str(p.relative_to(root)),'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'git_blob_sha':hashlib.sha1(b'blob '+str(len(b)).encode()+b'\0'+b).hexdigest()})
+          (out/'result.json').write_text(json.dumps({'images':reports,'history':hist,'social_posts_created':0},ensure_ascii=False,indent=2))
+          print('Rendered',len(reports),'approved',sum(x['archived'] for x in reports))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: abr-approved-media-${{ github.run_id }}
+          path: ${{ runner.temp }}/approved-media/
+          retention-days: 14
+          if-no-files-found: error
