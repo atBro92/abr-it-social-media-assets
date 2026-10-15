@@ -133,9 +133,10 @@ jobs:
               trim=logo_rgba.getbbox()
               if trim is None:raise ValueError('ORIGINAL_LOGO_TRANSPARENCY_FAILED')
               logo=logo_rgba.crop(trim)
-              logo.thumbnail((177,200),Image.Resampling.LANCZOS)
+              logo.thumbnail((135,155),Image.Resampling.LANCZOS)
               assert logo.mode=='RGBA' and logo.getchannel('A').getextrema()==(0,255),'LOGO_ALPHA_QA_FAILED'
-              base.alpha_composite(logo,(877+(177-logo.width)//2,840+(200-logo.height)//2))
+              # Match the original pre-regression scale/placement in the lower-right safe zone.
+              base.alpha_composite(logo,(908+(155-logo.width)//2,903+(155-logo.height)//2))
               d=ImageDraw.Draw(base)
               d.text((49,926),'Next Level IT,',font=font(30,True),fill='white')
               d.text((49,971),'weil Stillstand keine Option ist.',font=font(30,True),fill='white')
