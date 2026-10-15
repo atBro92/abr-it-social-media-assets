@@ -123,10 +123,13 @@ jobs:
               logo_rgba=Image.new('RGBA',logo_rgb.size)
               pixels=[]
               for r,g,b in logo_rgb.getdata():
-                  a=max(r,g,b)
-                  if a<12:
+                  peak=max(r,g,b)
+                  if peak<12:
                       pixels.append((0,0,0,0))
                   else:
+                      # Keep actual opaque red from the original logo rather than
+                      # brightening it into pale coral; only antialias dark fringe.
+                      a=min(255,round(peak*255/96))
                       scale=255.0/a
                       pixels.append((min(255,round(r*scale)),min(255,round(g*scale)),min(255,round(b*scale)),a))
               logo_rgba.putdata(pixels)
