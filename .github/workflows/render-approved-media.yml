@@ -95,7 +95,7 @@ jobs:
               base=scaled.crop((x,0,x+1080,1080)).convert('RGBA')
               layer=Image.new('RGBA',(1080,1080));d=ImageDraw.Draw(layer)
               for y in range(780,1080):
-                  t=min(1,max(0,(y-780)/130));d.line((0,y,1080,y),fill=(0,0,0,round(255*t*t*(3-2*t))))
+                  t=min(1,max(0,(y-780)/185));d.line((0,y,1080,y),fill=(0,0,0,round(185*t*t*(3-2*t))))
               base=Image.alpha_composite(base,layer)
               layer=Image.new('RGBA',(1080,1080));d=ImageDraw.Draw(layer)
               d.rounded_rectangle((42,42,810,410),radius=30,fill=(253,249,242,165),outline=(255,255,255,200),width=2)
@@ -113,8 +113,30 @@ jobs:
                   assert '\n' not in line and d.textlength(line,font=font(27))<=700
                   d.text((78,304+39*i),line,font=font(27),fill='#25272A')
               d.rounded_rectangle((78,390,191,396),radius=3,fill='#EF1A2C')
-              logo=Image.open(io.BytesIO(logo_bytes)).convert('RGB').resize((250,250),Image.Resampling.LANCZOS)
-              base.paste(logo,(806,812));d=ImageDraw.Draw(base)
+              # Repair V12 footer regression: restore the original freestanding ABR-IT mark.
+              # The Canva-sourced WebP is a 250px RGB square on black; RGB paste created
+              # the unwanted opaque black footer tile. Remove the matte without repainting
+              # the original red/white glyphs; exclude the website line present only in
+              # the newer square asset. Historic posts remain unchanged.
+              logo_rgb=Image.open(io.BytesIO(logo_bytes)).convert('RGB')
+              logo_rgb=logo_rgb.crop((0,0,logo_rgb.width,round(logo_rgb.height*0.82)))
+              logo_rgba=Image.new('RGBA',logo_rgb.size)
+              pixels=[]
+              for r,g,b in logo_rgb.getdata():
+                  a=max(r,g,b)
+                  if a<12:
+                      pixels.append((0,0,0,0))
+                  else:
+                      scale=255.0/a
+                      pixels.append((min(255,round(r*scale)),min(255,round(g*scale)),min(255,round(b*scale)),a))
+              logo_rgba.putdata(pixels)
+              trim=logo_rgba.getbbox()
+              if trim is None:raise ValueError('ORIGINAL_LOGO_TRANSPARENCY_FAILED')
+              logo=logo_rgba.crop(trim)
+              logo.thumbnail((177,200),Image.Resampling.LANCZOS)
+              assert logo.mode=='RGBA' and logo.getchannel('A').getextrema()==(0,255),'LOGO_ALPHA_QA_FAILED'
+              base.alpha_composite(logo,(877+(177-logo.width)//2,840+(200-logo.height)//2))
+              d=ImageDraw.Draw(base)
               d.text((49,926),'Next Level IT,',font=font(30,True),fill='white')
               d.text((49,971),'weil Stillstand keine Option ist.',font=font(30,True),fill='white')
               credit=cfg['credit'];assert len(credit)<=90 and '\n' not in credit
