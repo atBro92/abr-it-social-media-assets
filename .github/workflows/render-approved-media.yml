@@ -144,6 +144,8 @@ jobs:
               d.text((51,1024),credit,font=font(18),fill='#E8E9EC')
               p=out/(name+'.png');final=base.convert('RGB');final.save(p,format='PNG',compress_level=9,optimize=False)
               final.resize((360,360),Image.Resampling.LANCZOS).save(out/(name+'-preview.png'))
+              # Refuse any new final graphic with the historical opaque logo-tile/footer bug.
+              subprocess.run(['python','.github/scripts/qa_v12_footer.py',str(p)],check=True)
               b=p.read_bytes();sha=hashlib.sha256(b).hexdigest()
               row={'name':name,'file':p.name,'sha256':sha,'bytes':len(b),'width':1080,'height':1080,'format':'PNG','photo_sha256':cfg['photo_sha256'],'logo_sha256':hashlib.sha256(logo_bytes).hexdigest(),'archived':False,'reused_existing':False,'source_downloaded':True,'image_rerendered':True}
               reports.append(row)
