@@ -116,6 +116,8 @@ jobs:
                           raise ValueError('SHA256_MISMATCH:' + out)
                       original = result / Path(out).name
                       original.write_bytes(body)
+                      # Enforce V12 black-tile / opaque-footer regression QA before any archive commit.
+                      subprocess.run(['python', '.github/scripts/qa_v12_footer.py', str(original)], check=True)
                       with Image.open(io.BytesIO(body)) as im:
                           im.convert('RGB').resize((360, 360), Image.Resampling.LANCZOS).save(result / (Path(out).stem + '-preview.jpg'), quality=90)
                       approved = entry.get('approved') is True
