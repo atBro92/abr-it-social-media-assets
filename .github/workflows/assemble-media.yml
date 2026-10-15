@@ -24,6 +24,8 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+      - name: Install image quality gate
+        run: python -m pip install --quiet 'Pillow==12.3.0'
       - name: Validate and assemble image bytes without replacing approved files
         shell: bash
         run: |
@@ -48,6 +50,7 @@ jobs:
             test "$actual_sha" = "$expected_sha" || { rm -f "$temp"; echo 'SHA256 verification failed' >&2; exit 1; }
             test "$actual_size" = "$expected_size" || { rm -f "$temp"; echo 'Size verification failed' >&2; exit 1; }
             file "$temp" | grep -q 'PNG image data, 1080 x 1080' || { rm -f "$temp"; echo 'Expected true 1080x1080 PNG' >&2; exit 1; }
+            python .github/scripts/qa_v12_footer.py "$temp" || { rm -f "$temp"; echo 'Refusing to archive footer regression' >&2; exit 1; }
             if [ -e "$out" ]; then
               # Idempotent retry is OK; never silently overwrite historic approved bytes.
               test "$(sha256sum "$out" | awk '{print $1}')" = "$expected_sha" || { rm -f "$temp"; echo 'Refusing historic image overwrite' >&2; exit 1; }
