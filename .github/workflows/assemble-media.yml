@@ -1,7 +1,7 @@
 name: Assemble ABR-IT media
-
 on:
   push:
+    branches: [main]
     paths:
       - '.media-staging/**'
       - '.github/workflows/assemble-media.yml'
@@ -9,14 +9,22 @@ on:
 permissions:
   contents: write
 
+# All writers of the same archived assets must serialize their push/rebase cycle.
+# This group is also used by final-media-bridge.yml and render-approved-media.yml.
+concurrency:
+  group: abr-it-final-media-main
+  cancel-in-progress: false
+
 jobs:
   assemble:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
-      - name: Assemble validated PNG files
+      - name: Validate and assemble image bytes without replacing approved files
         shell: bash
         run: |
           set -euo pipefail
@@ -27,19 +35,46 @@ jobs:
             out="$(cat "$dir/output_path")"
             expected_sha="$(cat "$dir/sha256")"
             expected_size="$(cat "$dir/size")"
+            [[ "$out" =~ ^posts/[0-9]{4}/[0-9]{2}/[A-Za-z0-9._-]+\.png$ ]] || { echo "Invalid archive path: $out" >&2; exit 1; }
+            [[ "$expected_sha" =~ ^[a-f0-9]{64}$ ]] || { echo 'Invalid expected SHA256' >&2; exit 1; }
+            [[ "$expected_size" =~ ^[0-9]+$ ]] && (( expected_size > 0 && expected_size <= 15000000 )) || { echo 'Invalid PNG size' >&2; exit 1; }
+            chunks=("$dir"/chunk-*)
+            (( ${#chunks[@]} > 0 )) || { echo 'Missing media chunks' >&2; exit 1; }
             mkdir -p "$(dirname "$out")"
-            cat "$dir"/chunk-* | tr -d '\n\r' | base64 --decode > "$out"
-            actual_sha="$(sha256sum "$out" | awk '{print $1}')"
-            actual_size="$(stat -c '%s' "$out")"
-            test "$actual_sha" = "$expected_sha"
-            test "$actual_size" = "$expected_size"
-            file "$out" | grep -q 'PNG image data, 1080 x 1080'
+            temp="$(mktemp)"
+            cat "${chunks[@]}" | tr -d '\n\r' | base64 --decode > "$temp"
+            actual_sha="$(sha256sum "$temp" | awk '{print $1}')"
+            actual_size="$(stat -c '%s' "$temp")"
+            test "$actual_sha" = "$expected_sha" || { rm -f "$temp"; echo 'SHA256 verification failed' >&2; exit 1; }
+            test "$actual_size" = "$expected_size" || { rm -f "$temp"; echo 'Size verification failed' >&2; exit 1; }
+            file "$temp" | grep -q 'PNG image data, 1080 x 1080' || { rm -f "$temp"; echo 'Expected true 1080x1080 PNG' >&2; exit 1; }
+            if [ -e "$out" ]; then
+              # Idempotent retry is OK; never silently overwrite historic approved bytes.
+              test "$(sha256sum "$out" | awk '{print $1}')" = "$expected_sha" || { rm -f "$temp"; echo 'Refusing historic image overwrite' >&2; exit 1; }
+              rm -f "$temp"
+            else
+              mv "$temp" "$out"
+            fi
             rm -rf "$dir"
             changed=1
           done
-          if [ "$changed" -eq 0 ]; then exit 0; fi
+          if [ "$changed" -eq 0 ]; then echo 'No pending media chunks'; exit 0; fi
           git config user.name "ABR-IT Media Bot"
           git config user.email "info@abr-it.de"
-          git add .media-staging posts
-          git commit -m "Assemble validated ABR-IT social media asset"
-          git push
+          git add -A -- .media-staging posts
+          if git diff --cached --quiet; then echo 'Already archived, no new commit'; exit 0; fi
+          git commit -m "Assemble hash-verified ABR-IT social media asset"
+          # Retry only ordinary concurrent fast-forward conflicts; never force push.
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then
+              echo "Archive pushed successfully on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo 'Failed to fast-forward after 3 attempts' >&2
+              exit 1
+            fi
+            sleep "$(( 2 ** attempt ))"
+          done
