@@ -1,17 +1,17 @@
 {
   "name": "2026-10-17-radar-iphone-duo-lieferzeiten",
-  "photo_url": "https://www.apple.com/newsroom/images/2026/10/open-up-to-new-possibilities-with-iphone-duo/article/Apple-iPhone-Duo-closed-and-open_big.jpg.large_2x.jpg",
-  "photo_sha256": "d01bbbe7eef65d4b0df5dffa588450300b09713b6b5108d978456ae5f239915e",
-  "crop_x": 480,
+  "photo_url": "https://www.apple.com/newsroom/images/2026/10/open-up-to-new-possibilities-with-iphone-duo/article/Apple-iPhone-Duo-color-family_big.jpg.large_2x.jpg",
+  "photo_sha256": "82854360596a94ed67460a360ab4594cd37c055016728f18ab8ed3334e0bf477",
+  "crop_x": 380,
   "badge": "NEWS",
   "headline": [
-    "APPLE IPHONE DUO:",
-    "LIEFERUNG ERST 2027"
+    "APPLE IPHONE DUO",
+    "US-LIEFERUNG BIS 2027"
   ],
   "subhead": [
-    "In Deutschland bis Januar warten.",
-    "Verkaufsstart bleibt 23. Oktober."
+    "US-Shop: teils erst Januar 2027.",
+    "Deutsche Termine separat prüfen."
   ],
-  "credit": "Quelle: Apple / Mac Life | Foto: Apple",
+  "credit": "Quelle: Apple / Financial Times | Foto: Apple",
   "approved_sha256": null
 }
