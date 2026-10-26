@@ -27,7 +27,7 @@ jobs:
           OUT: ${{ runner.temp }}/source-review
         run: |
           python - <<'PY'
-          import os,json,html,hashlib,subprocess,shutil
+          import os,json,html,hashlib,subprocess,shutil,re,struct
           from pathlib import Path
           from urllib.parse import urljoin,urlparse
           from urllib.request import Request,build_opener,HTTPRedirectHandler
@@ -43,7 +43,11 @@ jobs:
           hosts={'blog.google','storage.googleapis.com','lh3.googleusercontent.com','lh4.googleusercontent.com','lh5.googleusercontent.com','www.gstatic.com','store.google.com','www.apple.com','images.apple.com','www.abr-it.de'}
           def check(u):
               p=urlparse(u)
-              if p.scheme!='https' or p.hostname not in hosts or p.username or p.password or p.port not in (None,443):raise ValueError('Unapproved public source host')
+              if p.scheme!='https' or p.username or p.password or p.port not in (None,443):raise ValueError('Unapproved public source host')
+              if p.hostname=='static.metricool.com':
+                  if p.query or p.fragment or not re.fullmatch(r'/planner/[0-9]{6}/6629428-file-[0-9]+\.(png|jpg|jpeg)',p.path):raise ValueError('Only public own-brand planner media allowed')
+                  return
+              if p.hostname not in hosts:raise ValueError('Unapproved public source host')
               if p.query and any(k in p.query.lower() for k in ('token=','signature=','credential=')):raise ValueError('Credential-bearing source rejected')
           class Redirect(HTTPRedirectHandler):
               def redirect_request(self,req,fp,code,msg,headers,newurl):
@@ -51,7 +55,7 @@ jobs:
           opener=build_opener(Redirect())
           def get(u):
               check(u)
-              with opener.open(Request(u,headers={'User-Agent':'ABR-IT-Editorial-Reference/2.0'}),timeout=25) as r:
+              with opener.open(Request(u,headers={'User-Agent':'ABR-IT-Editorial-Reference/2.1'}),timeout=25) as r:
                   data=r.read(15000001)
                   if len(data)>15000000:raise ValueError('Source exceeds review budget')
                   return data,r.headers.get('Content-Type','')
@@ -66,7 +70,7 @@ jobs:
                       if ss:src=ss.split(',')[-1].strip().split()[0]
                       if src:self.items.append({'url':src,'alt':a.get('alt','')})
           requests=sorted(Path('.media-reference').glob('*.json'))
-          request_file=None;request_sha256=None
+          request_file=None;request_sha256=None;cfg={}
           if requests:
               # Select the latest committed request, not an unrelated lexicographic winner.
               allowed_requests={str(p) for p in requests}
@@ -79,7 +83,23 @@ jobs:
               if not isinstance(pages,list) or not 1<=len(pages)<=3 or not 2<=len(match)<=80:raise ValueError('Invalid reference request')
           else:
               pages=['https://www.apple.com/de/newsroom/2026/10/meet-apple-homeview-a-new-way-to-enjoy-entertainment-and-manage-the-home/'];match='homeview'
-          records=[];seen=set();errors=[]
+          records=[];seen=set();errors=[];review_records=[]
+          # Manual repair: fetch only public own-brand reference images into a temporary
+          # read-only review artifact. Never archive, publish or rewrite these images.
+          review_urls=cfg.get('review_media',[])
+          if not isinstance(review_urls,list) or len(review_urls)>7:raise ValueError('Invalid review media list')
+          for u in dict.fromkeys(review_urls):
+              try:
+                  check(u)
+                  if urlparse(u).hostname!='static.metricool.com':raise ValueError('Review media must be own-brand planner media')
+                  b,typ=get(u)
+                  if not b.startswith(b'\x89PNG\r\n\x1a\n') or len(b)<24:raise ValueError('Review media is not PNG')
+                  w,h=struct.unpack('>II',b[16:24])
+                  if not 1<=w<=10000 or not 1<=h<=10000:raise ValueError('Invalid review dimensions')
+                  name=f'published-reference-{len(review_records):02d}.png';(out/name).write_bytes(b)
+                  review_records.append({'file':name,'url':u,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'width':w,'height':h,'archived':False})
+              except Exception as e:errors.append({'url':u,'error':str(e)[:200]})
+          (out/'review-media.json').write_text(json.dumps({'images':review_records,'repository_files_changed':0},indent=2))
           for pi,page in enumerate(pages):
               try:
                   body,ct=get(page);text=body.decode('utf-8');(out/f'primary-{pi}.html').write_text(text)
@@ -99,8 +119,8 @@ jobs:
                       if len(records)>=14:break
               except Exception as e:errors.append({'url':page,'error':str(e)[:200]})
               if len(records)>=14:break
-          (out/'sources.json').write_text(json.dumps({'request_file':request_file,'request_sha256':request_sha256,'review_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'references':records,'errors':errors,'social_posts_created':0,'repository_files_changed':0},ensure_ascii=False,indent=2))
-          print('Request:',request_file,'Archive images:',len(inventory),'Official references:',len(records))
+          (out/'sources.json').write_text(json.dumps({'request_file':request_file,'request_sha256':request_sha256,'review_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'references':records,'review_media':review_records,'errors':errors,'social_posts_created':0,'repository_files_changed':0},ensure_ascii=False,indent=2))
+          print('Request:',request_file,'Archive images:',len(inventory),'Official references:',len(records),'Published references:',len(review_records))
           if not records:raise SystemExit('Reference download incomplete; history artifact remains usable')
           PY
       - uses: actions/upload-artifact@v4
