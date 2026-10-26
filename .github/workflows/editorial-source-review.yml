@@ -20,7 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - name: Read approved manufacturer references and existing final archive
         env:
           OUT: ${{ runner.temp }}/source-review
@@ -65,8 +66,16 @@ jobs:
                       if ss:src=ss.split(',')[-1].strip().split()[0]
                       if src:self.items.append({'url':src,'alt':a.get('alt','')})
           requests=sorted(Path('.media-reference').glob('*.json'))
+          request_file=None;request_sha256=None
           if requests:
-              cfg=json.loads(requests[-1].read_text());pages=cfg['pages'];match=cfg['match'].lower()
+              # Select the latest committed request, not an unrelated lexicographic winner.
+              allowed_requests={str(p) for p in requests}
+              changed=subprocess.check_output(['git','log','-1','--format=','--name-only','--diff-filter=AM','--','.media-reference/*.json'],text=True).splitlines()
+              candidates=[p.strip() for p in changed if p.strip() in allowed_requests]
+              if len(candidates)!=1:raise ValueError('REFERENCE_REQUEST_AMBIGUOUS')
+              request=Path(candidates[0]);request_file=str(request)
+              request_sha256=hashlib.sha256(request.read_bytes()).hexdigest()
+              cfg=json.loads(request.read_text());pages=cfg['pages'];match=cfg['match'].lower()
               if not isinstance(pages,list) or not 1<=len(pages)<=3 or not 2<=len(match)<=80:raise ValueError('Invalid reference request')
           else:
               pages=['https://www.apple.com/de/newsroom/2026/10/meet-apple-homeview-a-new-way-to-enjoy-entertainment-and-manage-the-home/'];match='homeview'
@@ -90,8 +99,8 @@ jobs:
                       if len(records)>=14:break
               except Exception as e:errors.append({'url':page,'error':str(e)[:200]})
               if len(records)>=14:break
-          (out/'sources.json').write_text(json.dumps({'references':records,'errors':errors,'social_posts_created':0,'repository_files_changed':0},ensure_ascii=False,indent=2))
-          print('Archive images:',len(inventory),'Official references:',len(records))
+          (out/'sources.json').write_text(json.dumps({'request_file':request_file,'request_sha256':request_sha256,'review_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'references':records,'errors':errors,'social_posts_created':0,'repository_files_changed':0},ensure_ascii=False,indent=2))
+          print('Request:',request_file,'Archive images:',len(inventory),'Official references:',len(records))
           if not records:raise SystemExit('Reference download incomplete; history artifact remains usable')
           PY
       - uses: actions/upload-artifact@v4
