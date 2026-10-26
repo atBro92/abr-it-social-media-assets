@@ -1,0 +1,11 @@
+{
+  "name": "2026-10-26-service-firmenpostfaecher-symbolfoto",
+  "photo_url": "https://www.apple.com/newsroom/images/2024/04/apple-launches-made-for-business-in-select-stores-around-the-world/article/Apple-Today-at-Apple-Sock-Club-Apple-Business-Essentials_big.jpg.large_2x.jpg",
+  "photo_sha256": "ce7bb980a5d53008bc8d2b833877eac236921806b5065fb9a34c53a5c2a9f91b",
+  "crop_x": 200,
+  "badge": "SERVICE",
+  "headline": ["FIRMENPOSTFÄCHER", "SAUBER UMZIEHEN"],
+  "subhead": ["Mails, Kontakte und Kalender.", "Den Wechsel gemeinsam planen."],
+  "credit": "Quelle: ABR-IT | Symbolfoto: Apple Newsroom (2024)",
+  "approved_sha256": null
+}
