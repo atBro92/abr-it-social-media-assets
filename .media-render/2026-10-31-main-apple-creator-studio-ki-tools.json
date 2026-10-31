@@ -1,17 +1,17 @@
 {
   "name": "2026-10-31-main-apple-creator-studio-ki-tools",
-  "photo_url": "https://www.apple.com/newsroom/images/2026/10/apple-creator-studio-adds-powerful-new-ai-features-and-even-more-creative-tools/article/Apple-Creator-Studio-Pixelmator-Pro-Generate-Fill-261027_big.jpg.large_2x.jpg",
-  "photo_sha256": "362fe346d91eafc93d887ebf9833ed3133cdc007be9c9c49dbf7f968bb799fc9",
-  "crop_x": 214,
+  "photo_url": "https://www.apple.com/newsroom/images/2026/10/apple-creator-studio-adds-powerful-new-ai-features-and-even-more-creative-tools/article/Apple-Creator-Studio-Logic-Pro-Producer-Pack-with-Sergio-George-261027_big.jpg.large_2x.jpg",
+  "photo_sha256": "08489adf49a63bd6259073a50fbec2241f18937f34b4ebbc50b540eed0366574",
+  "crop_x": 0,
   "badge": "NEWS",
   "headline": [
     "Apple Creator Studio",
     "bekommt neue KI-Tools"
   ],
   "subhead": [
-    "Bildbearbeitung per Texteingabe.",
+    "Musik, Bilder und Dokumente.",
     "Neue Funktionen ab November."
   ],
-  "credit": "Quelle/Fotos: Apple, 27.10.2026",
+  "credit": "Foto/Quelle: Apple, 27.10.2026",
   "approved_sha256": null
 }
