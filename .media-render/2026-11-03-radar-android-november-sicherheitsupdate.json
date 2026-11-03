@@ -1,8 +1,8 @@
 {
   "name": "2026-11-03-radar-android-november-sicherheitsupdate",
-  "photo_url": "https://www.apple.com/newsroom/images/2024/04/apple-launches-made-for-business-in-select-stores-around-the-world/article/Apple-Today-at-Apple-Max-Williamson-using-iPhone_big.jpg.large_2x.jpg",
-  "photo_sha256": "37455858eef8b9b6517916895c22635009e028a492d178d73b09a0bb93929520",
-  "crop_x": 0,
+  "photo_url": "https://storage.googleapis.com/gweb-uniblog-publish-prod/images/hero_static_new.width-1300.png",
+  "photo_sha256": "0c56a96ccd58c48adc86af5b5a07300b06ac84cb3b59cf9cccde2ff0ae6a11b6",
+  "crop_x": 300,
   "badge": "NEWS",
   "headline": [
     "ANDROID-UPDATE",
@@ -12,6 +12,6 @@
     "Google schließt kritische Sicherheitslücken.",
     "Updates kommen je nach Hersteller."
   ],
-  "credit": "Quelle: Google, 02.11. | Symbolfoto: Apple (2024)",
+  "credit": "Quelle: Google, 02.11. | Symbolfoto: Google (2025)",
   "approved_sha256": null
 }
