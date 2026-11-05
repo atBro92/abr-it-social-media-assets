@@ -65,6 +65,22 @@ jobs:
           reports=[];skipped=[]
           today=datetime.now(ZoneInfo('Europe/Berlin')).date().isoformat()
           configs=sorted(root.glob('.media-render/*.json'))
+          # Cross-lane, all-history media source lock. The original photograph, not
+          # the final image SHA or text overlay, defines a unique hero motif.
+          archived_sources={'photo_sha256':{},'photo_url':{}}
+          for prior in configs:
+              old=json.loads(prior.read_text())
+              old_name=old.get('name','')
+              approval_hash=old.get('approved_sha256')
+              if not isinstance(approval_hash,str) or not re.fullmatch(r'[0-9a-f]{64}',approval_hash):
+                  continue
+              archived_path=root/('posts/'+old_name[:4]+'/'+old_name[5:7]+'/'+old_name+'-'+approval_hash[:8]+'.png')
+              if not archived_path.is_file():
+                  continue
+              for source_field in archived_sources:
+                  source_value=old.get(source_field)
+                  if isinstance(source_value,str) and source_value:
+                      archived_sources[source_field].setdefault(source_value,old_name)
           for config in configs:
               cfg=json.loads(config.read_text());name=cfg['name']
               if not re.fullmatch(r'20\d{2}-\d{2}-\d{2}-(main|service|radar)-[a-z0-9-]{3,80}',name):raise ValueError('INVALID_NAME')
@@ -87,6 +103,21 @@ jobs:
                       rb=get(raw);assert len(rb)==len(b) and hashlib.sha256(rb).hexdigest()==approval,'PUBLIC_RAW_MISMATCH'
                       reports.append({'name':name,'file':p.name,'sha256':approval,'bytes':len(b),'width':1080,'height':1080,'format':'PNG','photo_sha256':cfg['photo_sha256'],'logo_sha256':hashlib.sha256(logo_bytes).hexdigest(),'archived':True,'commit':commit,'output_path':path,'raw_url':raw,'public_raw_sha256_match':True,'reused_existing':True,'source_downloaded':False,'image_rerendered':False})
                       continue
+              # Mandatory independent stop before new preview or archive, across
+              # MAIN/SERVICE/RADAR and all previously archived source manifests.
+              # Varying the crop, headline or filename never makes the photo unique.
+              for source_field in ('photo_sha256','photo_url'):
+                  previous_name=archived_sources[source_field].get(cfg.get(source_field))
+                  if previous_name and previous_name!=name:
+                      (out/'result.json').write_text(json.dumps({
+                          'images':reports,
+                          'error':'DUPLICATE_HERO_SOURCE',
+                          'source_field':source_field,
+                          'reused_from':previous_name,
+                          'blocked_manifest':name,
+                          'social_posts_created':0
+                      },ensure_ascii=False,indent=2))
+                      raise ValueError('DUPLICATE_HERO_SOURCE:'+previous_name)
               photo_bytes=get(cfg['photo_url'])
               assert hashlib.sha256(photo_bytes).hexdigest()==cfg['photo_sha256'],'PHOTO_CHANGED'
               im=Image.open(io.BytesIO(photo_bytes)).convert('RGB')
